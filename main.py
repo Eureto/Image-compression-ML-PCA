@@ -59,18 +59,32 @@ def pca_compressed_image(pca_channel, n_components):
 
 def compare_images(img_path, compressed_img_array, n_components):
     """Display side-by-side comparison of original and compressed images with size information"""
-    # Get original image and size
+    # Get original image
     img_open = Image.open(img_path)
-    original_size_kb = os.stat(img_path).st_size / 1024
     
     # Convert compressed array to PIL Image
     compressed_img = Image.fromarray(compressed_img_array)
     
-    # Save compressed image temporarily to get its size
-    temp_path = "/tmp/temp_compressed.png"
-    compressed_img.save(temp_path, "PNG")
-    compressed_size_kb = os.stat(temp_path).st_size / 1024
-    os.remove(temp_path)
+    # Save both as JPG with consistent quality for fair comparison
+    original_temp = "/tmp/temp_original.jpg"
+    compressed_temp = "/tmp/temp_compressed.jpg"
+    
+    # Convert grayscale to RGB if needed for JPG
+    if img_open.mode != 'RGB':
+        img_open = img_open.convert('RGB')
+    if compressed_img.mode != 'RGB':
+        compressed_img = compressed_img.convert('RGB')
+    
+    img_open.save(original_temp, "JPEG", quality=85)
+    compressed_img.save(compressed_temp, "JPEG", quality=85)
+    
+    # Get file sizes
+    original_size_kb = os.stat(original_temp).st_size / 1024
+    compressed_size_kb = os.stat(compressed_temp).st_size / 1024
+    
+    # Cleanup temp files
+    os.remove(original_temp)
+    os.remove(compressed_temp)
     
     # Calculate compression metrics
     size_reduction_kb = original_size_kb - compressed_size_kb
@@ -113,10 +127,10 @@ def main():
     for photo in photos_list_path:
         # Process image
         pca_channel = pca_image(photo)
-        compressed_img = pca_compressed_image(pca_channel, 50)
+        compressed_img = pca_compressed_image(pca_channel, 30)
         
         # Show comparison with size reduction
-        compare_images(photo, compressed_img, 50)
+        compare_images(photo, compressed_img, 30)
 
 
 
