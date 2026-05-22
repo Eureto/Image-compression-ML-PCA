@@ -111,7 +111,17 @@ def compare_images(img_path, compressed_img_array, n_components):
              ha='center', fontsize=11, bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
     
     plt.tight_layout(rect=[0, 0.05, 1, 1])
-    plt.show()
+    plt.show()cd /home/mat/.cursor/projects/empty-window
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+export PYTHONPATH=.
+
+python -m image_vae.train --data_dir /ścieżka/do/obrazów --epochs 20 --image_size 128 --latent_dim 256 --save_path checkpoint.pt
+
+python -m image_vae.compress --checkpoint checkpoint.pt --input photo.jpg --output photo.lvae.npz
+python -m image_vae.decompress --checkpoint checkpoint.pt --input photo.lvae.npz --output out.png
+
+pytest tests/test_roundtrip.py
 
 
 
