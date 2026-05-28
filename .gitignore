@@ -1,2 +1,4 @@
-venv
-sample_images/*.jpeg
+sample_images/
+compressed_output/
+__pychache__/
+venv/

@@ -8,53 +8,102 @@ from sklearn.decomposition import PCA
 
 _IMAGES_FOLDER = "./sample_images/"
 
-def image_data(imgPath):
-    #open image and get the info
-    img_size_kb = os.stat(imgPath).st_size/1024
-    img_open = Image.open(imgPath)
-    data = img_open.getdata()
+# ==================== CONFIGURATION ====================
+# Set MANUAL_COMPONENTS to None to use automatic optimal detection
+# Set MANUAL_COMPONENTS to an integer (e.g., 50, 100, 150) to override and use fixed components
+MANUAL_COMPONENTS = None  # Change this to manually set components (e.g., 50, 100, 150)
+# ========================================================
 
-    #Attempts to reshape the flat pixel data into a 3D array with dimensions (width, height, channels). 
-    # If the image is grayscale, the -1 will resolve to 1 (one channel for intensity).
-    # If the image is RGB, the -1 will resolve to 3 (three channels for Red, Green, Blue).
-    img_pixels = np.array(data).reshape(*img_open.size, -1) 
+def image_data(imgPath):
+    """Return basic information about an image.
+
+    The original implementation assumed the image data could be reshaped
+    directly from ``Image.getdata()`` using the image's ``size`` tuple. This
+    works for simple RGB JPEGs but fails for other formats (e.g. WebP) and for
+    non‑square images because the width/height ordering is swapped later in the
+    pipeline. The updated version forces an RGB conversion and uses ``np.array``
+    which returns an array with shape ``(height, width, channels)`` – the natural
+    layout for Pillow images. This eliminates the need for manual reshaping and
+    ensures the dimensions are reported correctly.
+    """
+    img_size_kb = os.stat(imgPath).st_size / 1024
+    # Force RGB to guarantee three channels and a consistent colour space
+    img = Image.open(imgPath).convert('RGB')
+    img_pixels = np.array(img)  # shape: (height, width, 3)
     img_dim = img_pixels.shape
 
-    dict = {}
-    dict["image_size_kb"] = img_size_kb
-    dict["image_dimension"] = img_dim
-
-    return dict
+    return {"image_size_kb": img_size_kb, "image_dimension": img_dim}
 
 def pca_image(imgPath):
-    img_open = Image.open(imgPath)
-    data = np.array(img_open.getdata())
-    img_pixels = data.reshape(*img_open.size, -1)
+    """Perform PCA on each colour channel of an image.
 
-    pca_channel={}
-    t_img = np.transpose(img_pixels)
+    The function now:
+    1. Opens the image and converts it to RGB to guarantee a 3‑channel layout.
+    2. Uses ``np.array`` to obtain a ``(height, width, 3)`` array.
+    3. Transposes the array to ``(channels, height, width)`` so each channel can
+       be processed independently.
+    4. Fits a PCA model to each 2‑D channel (treated as ``height`` samples and
+       ``width`` features).
+    """
+    img = Image.open(imgPath).convert('RGB')
+    img_pixels = np.array(img)  # (height, width, 3)
 
-    for i in range(img_pixels.shape[-1]): #Dla każdego kanału RGB oblicznamy osobne pca
-        per_channel = t_img[i]
-        channel = t_img[i].reshape(*img_pixels.shape[:-1])
-        pca = PCA(random_state = 42)
+    # Move channel axis to the front: (3, height, width)
+    t_img = np.transpose(img_pixels, (2, 0, 1))
+
+    pca_channel = {}
+    for i in range(t_img.shape[0]):  # iterate over channels
+        channel = t_img[i]  # shape: (height, width)
+        pca = PCA(random_state=42)
         fit_pca = pca.fit_transform(channel)
         pca_channel[i] = (pca, fit_pca)
 
     return pca_channel
 
 def pca_compressed_image(pca_channel, n_components):
-    temp_res = []
+    """Reconstruct an image from the PCA representation.
+
+    The original implementation built a list of 2‑D channel arrays, then used
+    ``np.transpose`` on that list. ``np.transpose`` swaps the first two axes,
+    which unintentionally flipped width and height for non‑square images. The
+    updated version stacks the channel arrays along the last axis using
+    ``np.stack`` which preserves the original ``(height, width)`` layout.
+    """
+    channel_arrays = []
     for channel in pca_channel:
         pca, fit_pca = pca_channel[channel]
+        # Keep only the requested number of components
         pca_pixel = fit_pca[:, :n_components]
         pca_comp = pca.components_[:n_components, :]
         compressed_pixels = np.dot(pca_pixel, pca_comp) + pca.mean_
-        temp_res.append(compressed_pixels)
+        channel_arrays.append(compressed_pixels)
 
-    compressed_image = np.transpose(temp_res)
-    compressed_image = np.array(compressed_image, dtype=np.uint8)
+    # Stack channels to shape (height, width, channels)
+    compressed_image = np.stack(channel_arrays, axis=2)
+    compressed_image = np.clip(np.round(compressed_image), 0, 255).astype(np.uint8)
     return compressed_image
+
+
+def get_optimal_components(pca_channel, variance_threshold=0.95):
+    """
+    Determine optimal number of components based on explained variance ratio.
+    
+    Args:
+        pca_channel (dict): Dictionary containing PCA models for each channel
+        variance_threshold (float): Threshold of explained variance to retain (0-1)
+        
+    Returns:
+        int: Optimal number of components
+    """
+    max_components_needed = 0
+    
+    for channel in pca_channel:
+        pca, _ = pca_channel[channel]
+        cumsum_var = np.cumsum(pca.explained_variance_ratio_)
+        components_needed = np.argmax(cumsum_var >= variance_threshold) + 1
+        max_components_needed = max(max_components_needed, components_needed)
+    
+    return max_components_needed
 
 
 def compare_images(img_path, compressed_img_array, n_components):
@@ -111,17 +160,32 @@ def compare_images(img_path, compressed_img_array, n_components):
              ha='center', fontsize=11, bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
     
     plt.tight_layout(rect=[0, 0.05, 1, 1])
-    plt.show()cd /home/mat/.cursor/projects/empty-window
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-export PYTHONPATH=.
+    plt.show()
 
-python -m image_vae.train --data_dir /ścieżka/do/obrazów --epochs 20 --image_size 128 --latent_dim 256 --save_path checkpoint.pt
+def save_compressed_image(original_path: str, compressed_img_array: np.ndarray) -> None:
+    """Save the compressed image to the ``compressed_output`` directory.
 
-python -m image_vae.compress --checkpoint checkpoint.pt --input photo.jpg --output photo.lvae.npz
-python -m image_vae.decompress --checkpoint checkpoint.pt --input photo.lvae.npz --output out.png
+    The function creates the output directory if it does not exist and writes the
+    compressed image as a JPEG file named ``<original_basename>_compressed.jpg``.
+    This allows the user to inspect the result without relying on the interactive
+    ``matplotlib`` window, which may not be visible in a headless environment.
+    """
+    # Ensure the output directory exists
+    output_dir = os.path.join(os.getcwd(), "compressed_output")
+    os.makedirs(output_dir, exist_ok=True)
 
-pytest tests/test_roundtrip.py
+    # Derive a filename based on the original image name
+    base_name = os.path.basename(original_path)
+    name_without_ext, _ = os.path.splitext(base_name)
+    output_path = os.path.join(output_dir, f"{name_without_ext}_compressed.jpg")
+
+    # Convert the NumPy array back to a PIL Image and save as JPEG
+    compressed_img = Image.fromarray(compressed_img_array)
+    # Ensure the image is in RGB mode for JPEG compatibility
+    if compressed_img.mode != "RGB":
+        compressed_img = compressed_img.convert("RGB")
+    compressed_img.save(output_path, "JPEG", quality=85)
+    print(f"Compressed image saved to: {output_path}")
 
 
 
@@ -137,10 +201,26 @@ def main():
     for photo in photos_list_path:
         # Process image
         pca_channel = pca_image(photo)
-        compressed_img = pca_compressed_image(pca_channel, 30)
+        
+        # Determine number of components
+        if MANUAL_COMPONENTS is not None:
+            # Use manually specified components
+            n_components = MANUAL_COMPONENTS
+            optimal_components = "N/A (manual override)"
+            print(f"Image: {photo} | Using manual override: {n_components} components")
+        else:
+            # Automatically determine optimal components based on explained variance (95%)
+            optimal_components = get_optimal_components(pca_channel, variance_threshold=0.95)
+            # Use a minimum of 100 components (or the optimal value if higher) but cap at 200
+            n_components = max(min(optimal_components, 200), 100)
+            print(f"Image: {photo} | Optimal components: {optimal_components} | Using: {n_components}")
+        
+        compressed_img = pca_compressed_image(pca_channel, n_components)
         
         # Show comparison with size reduction
-        compare_images(photo, compressed_img, 30)
+        compare_images(photo, compressed_img, n_components)
+        # Also save the compressed image to a file for inspection
+        save_compressed_image(photo, compressed_img)
 
 
 
