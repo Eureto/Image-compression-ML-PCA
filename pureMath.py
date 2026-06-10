@@ -279,6 +279,9 @@ def main():
     """
     Main function to execute the image compression workflow.
     """
+
+    N_components = 10
+
     # Ask user to select a photo using file picker
     filepath = crossfiledialog.open_file()
     
@@ -286,13 +289,13 @@ def main():
     pca_channel = image_channels_components(filepath)
     
     # Compress image by retaining only 30 principal components per channel
-    compressed_pca = compress_image_channels_components(pca_channel, 30)
+    compressed_pca = compress_image_channels_components(pca_channel, N_components)
     
     # Decompress the compressed image data to reconstruct the image
     compressed_img = decompress_image_channels_components(compressed_pca)
     
     # Show comparison between original and compressed images with size reduction metrics
-    compare_images(filepath, compressed_img, 30)
+    compare_images(filepath, compressed_img, N_components)
 
 
 # Execute main function when script is run directly
